@@ -9,7 +9,7 @@ app = Flask(__name__)
 # 🚨 TEST MODU AYARI
 # True iken: Saat ne olursa olsun sinyal Telegram'a düşer (Test için).
 # False iken: Sadece aşağıdaki seans saatlerinde sinyal gönderir.
-TEST_MODE = True
+TEST_MODE = False
 # ==========================================
 
 # Telegram Bot Bilgileri
