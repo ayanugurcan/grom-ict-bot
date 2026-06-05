@@ -37,17 +37,15 @@ def get_tr_saat():
     return datetime.now(tz)
 
 # ==========================================
-# ⏱️ YENİ AKILLI SEANS FİLTRESİ
+# ⏱️ AKILLI SEANS FİLTRESİ
 # ==========================================
 def seans_kontrol(parite):
     now = get_tr_saat()
     saat = now.hour + (now.minute / 60.0)
     
-    # Hafta sonu piyasalar kapalıyken bot dinlenmeye geçer
     if now.weekday() >= 5: 
         return False
 
-    # Londra Sabahı + New York (Pre-Market, Açılış, Silver Bullet ve PM seansı dahil tek blok)
     if (9.0 <= saat <= 12.5) or (15.0 <= saat <= 21.0):
         return True
         
@@ -61,13 +59,11 @@ def likidite_seviyelerini_hesapla(sembol, df_15m, ticker):
     now = datetime.now(tr_tz)
     bugun = now.date()
     
-    # 15M verisinin indexini TR saatine çeviriyoruz
     df_15m.index = df_15m.index.tz_convert('Europe/Istanbul')
     df_bugun = df_15m[df_15m.index.date == bugun]
 
     seviyeler = {"BSL": {}, "SSL": {}}
 
-    # --- 1. PDH / PDL (Dünün En Yükseği / En Düşüğü) ---
     try:
         df_daily = ticker.history(period="3d", interval="1d")
         if len(df_daily) >= 2:
@@ -76,17 +72,14 @@ def likidite_seviyelerini_hesapla(sembol, df_15m, ticker):
     except:
         pass
 
-    # --- 2. HTF Swing High/Low (Son 20 Mumun Zirve/Dibi) ---
     seviyeler["BSL"]["HTF_Swing"] = float(df_15m['High'].iloc[-20:].max())
     seviyeler["SSL"]["HTF_Swing"] = float(df_15m['Low'].iloc[-20:].min())
 
-    # --- 3. Asian Range (00:00 - 08:00 TR Saati) ---
     asya_mums = df_bugun[(df_bugun.index.hour >= 0) & (df_bugun.index.hour < 8)]
     if not asya_mums.empty:
         seviyeler["BSL"]["Asian_High"] = float(asya_mums['High'].max())
         seviyeler["SSL"]["Asian_Low"] = float(asya_mums['Low'].min())
 
-    # --- 4. London Range (09:00 - 12:00 TR Saati) ---
     if now.hour >= 12:
         london_mums = df_bugun[(df_bugun.index.hour >= 9) & (df_bugun.index.hour < 12)]
         if not london_mums.empty:
@@ -99,7 +92,7 @@ def likidite_seviyelerini_hesapla(sembol, df_15m, ticker):
 # 🔍 TARAMA VE TETİKLEME DÖNGÜSÜ
 # ==========================================
 def asistan_ana_dongu():
-    print("Gelişmiş ICT Likidite Asistanı v2.5 devrede...")
+    print("Gelişmiş ICT Likidite Asistanı v2.6 devrede...")
     while True:
         try:
             for ad, sembol in PARITELER.items():
@@ -113,7 +106,6 @@ def asistan_ana_dongu():
                 if df_15m.empty or df_1m.empty:
                     continue
 
-                # Canlı seviyeleri al
                 havuzlar = likidite_seviyelerini_hesapla(sembol, df_15m, ticker)
                 
                 canli_mum = df_1m.iloc[-1]
@@ -122,45 +114,69 @@ def asistan_ana_dongu():
                 yurek_low = float(canli_mum['Low'])
 
                 if ad not in hafiza:
-                    hafiza[ad] = {"durum": "BEKLEMEDE", "hedef_yon": None, "patlayan_seviye": ""}
+                    hafiza[ad] = {"durum": "BEKLEMEDE", "hedef_yon": None, "patlayan_seviye": "", "likidite_fiyat": 0.0, "cisd_esik": 0.0}
 
-                # LİKİDİTE SÜPÜRME KONTROLÜ (SWEEP)
+                # 1️⃣ LİKİDİTE SÜPÜRME KONTROLÜ (SWEEP)
                 if hafiza[ad]["durum"] == "BEKLEMEDE":
-                    # Üst Likiditeler (BSL) Kontrolü
+                    # Üst Likiditeler (BSL)
                     for etiket, seviye_fiyat in havuzlar["BSL"].items():
                         if yurek_high > seviye_fiyat and su_anki_fiyat <= seviye_fiyat:
+                            # Son 5 mumdaki en son boğa (yeşil) mumun açılışını bul (SHORT CISD Eşiği)
+                            esik_fiyat = seviye_fiyat
+                            for i in range(len(df_1m)-1, max(-1, len(df_1m)-6), -1):
+                                if df_1m['Close'].iloc[i] > df_1m['Open'].iloc[i]:
+                                    esik_fiyat = float(df_1m['Open'].iloc[i])
+                                    break
+                            
                             hafiza[ad] = {
                                 "durum": "HAZIRLAN",
                                 "hedef_yon": "SHORT",
-                                "patlayan_seviye": f"{etiket} ({seviye_fiyat})"
+                                "patlayan_seviye": f"{etiket} ({seviye_fiyat})",
+                                "likidite_fiyat": seviye_fiyat,
+                                "cisd_esik": esik_fiyat
                             }
-                            telegram_mesaj_gonder(f"🚨 <b>{ad} - LİKİDİTE SÜPÜRÜLDÜ!</b>\n\n🎯 <b>Seviye:</b> {etiket}\n💰 <b>Fiyat:</b> {seviye_fiyat}\n\n<b>1M grafikte CISD (Aşağı Gövde Kapanışı) bekleniyor, pusuya yat boss!</b>")
+                            telegram_mesaj_gonder(f"🚨 <b>{ad} - LİKİDİTE SÜPÜRÜLDÜ!</b>\n\n🎯 <b>Seviye:</b> {etiket}\n💰 <b>Çizgi Fiyatı:</b> {seviye_fiyat}\n⚠️ <b>CISD Tetik Seviyesi:</b> {esik_fiyat}\n\n<b>1M gövdesi hem çizginin hem de tetik seviyesinin ALTINDA kapattığı an sinyal gelecek. Pusuya devam boss!</b>")
                             break
                     
-                    # Alt Likiditeler (SSL) Kontrolü
+                    # Alt Likiditeler (SSL)
                     if hafiza[ad]["durum"] == "BEKLEMEDE":
                         for etiket, seviye_fiyat in havuzlar["SSL"].items():
                             if yurek_low < seviye_fiyat and su_anki_fiyat >= seviye_fiyat:
+                                # Son 5 mumdaki en son ayı (kırmızı) mumun açılışını bul (LONG CISD Eşiği)
+                                esik_fiyat = seviye_fiyat
+                                for i in range(len(df_1m)-1, max(-1, len(df_1m)-6), -1):
+                                    if df_1m['Close'].iloc[i] < df_1m['Open'].iloc[i]:
+                                        esik_fiyat = float(df_1m['Open'].iloc[i])
+                                        break
+                                
                                 hafiza[ad] = {
                                     "durum": "HAZIRLAN",
                                     "hedef_yon": "LONG",
-                                    "patlayan_seviye": f"{etiket} ({seviye_fiyat})"
+                                    "patlayan_seviye": f"{etiket} ({seviye_fiyat})",
+                                    "likidite_fiyat": seviye_fiyat,
+                                    "cisd_esik": esik_fiyat
                                 }
-                                telegram_mesaj_gonder(f"🚨 <b>{ad} - LİKİDİTE SÜPÜRÜLDÜ!</b>\n\n🎯 <b>Seviye:</b> {etiket}\n💰 <b>Fiyat:</b> {seviye_fiyat}\n\n<b>1M grafikte CISD (Yukarı Gövde Kapanışı) bekleniyor, pusuya yat boss!</b>")
+                                telegram_mesaj_gonder(f"🚨 <b>{ad} - LİKİDİTE SÜPÜRÜLDÜ!</b>\n\n🎯 <b>Seviye:</b> {etiket}\n💰 <b>Çizgi Fiyatı:</b> {seviye_fiyat}\n⚠️ <b>CISD Tetik Seviyesi:</b> {esik_fiyat}\n\n<b>1M gövdesi hem çizginin hem de tetik seviyesinin ÜSTÜNDE kapattığı an sinyal gelecek. Pusuya devam boss!</b>")
                                 break
 
-                # CISD ONAY KONTROLÜ (1M Gövde Kapanışı)
+                # 2️⃣ GERÇEK VE MİLMETRİK CISD ONAY KONTROLÜ
                 elif hafiza[ad]["durum"] == "HAZIRLAN":
                     gecmis_1m_open = float(df_1m['Open'].iloc[-2])
                     gecmis_1m_close = float(df_1m['Close'].iloc[-2])
+                    liq_fiyat = hafiza[ad]["likidite_fiyat"]
+                    esik_fiyat = hafiza[ad]["cisd_esik"]
 
-                    if hafiza[ad]["hedef_yon"] == "SHORT" and gecmis_1m_close < gecmis_1m_open:
-                        telegram_mesaj_gonder(f"🚀 <b>{ad} - GİRİŞ ONAYLANDI (CISD)!</b>\n\n💥 <b>Süpürülen Yer:</b> {hafiza[ad]['patlayan_seviye']}\n📊 <b>Yön:</b> SHORT\n💰 <b>Giriş:</b> {su_anki_fiyat}\n🛑 <b>Stop:</b> Süpürülen Tepe Üstü\n\n<i>Alchemy ekranından emrini yönetebilirsin. Başarılar!</i>")
-                        hafiza[ad] = {"durum": "BEKLEMEDE", "hedef_yon": None, "patlayan_seviye": ""}
+                    if hafiza[ad]["hedef_yon"] == "SHORT":
+                        # Şartlar: Mum kırmızı olmalı AND çizginin altında kapatmalı AND son boğa mumunun açılışını aşağı kırmalı
+                        if gecmis_1m_close < gecmis_1m_open and gecmis_1m_close < liq_fiyat and gecmis_1m_close < esik_fiyat:
+                            telegram_mesaj_gonder(f"🚀 <b>{ad} - GİRİŞ ONAYLANDI (CISD)!</b>\n\n💥 <b>Süpürülen Yer:</b> {hafiza[ad]['patlayan_seviye']}\n📊 <b>Yön:</b> SHORT\n💰 <b>Anlık Giriş:</b> {su_anki_fiyat}\n🛑 <b>Stop:</b> Süpürülen Tepe Üstü\n\n<i>Kapanış nizami geldi, emrini yönetebilirsin boss!</i>")
+                            hafiza[ad] = {"durum": "BEKLEMEDE", "hedef_yon": None, "patlayan_seviye": "", "likidite_fiyat": 0.0, "cisd_esik": 0.0}
 
-                    elif hafiza[ad]["hedef_yon"] == "LONG" and gecmis_1m_close > gecmis_1m_open:
-                        telegram_mesaj_gonder(f"🚀 <b>{ad} - GİRİŞ ONAYLANDI (CISD)!</b>\n\n💥 <b>Süpürülen Yer:</b> {hafiza[ad]['patlayan_seviye']}\n📊 <b>Yön:</b> LONG\n💰 <b>Giriş:</b> {su_anki_fiyat}\n🛑 <b>Stop:</b> Süpürülen Dip Altı\n\n<i>Alchemy ekranından emrini yönetebilirsin. Başarılar!</i>")
-                        hafiza[ad] = {"durum": "BEKLEMEDE", "hedef_yon": None, "patlayan_seviye": ""}
+                    elif hafiza[ad]["hedef_yon"] == "LONG":
+                        # Şartlar: Mum yeşil olmalı AND çizginin üstünde kapatmalı AND son ayı mumunun açılışını yukarı kırmalı
+                        if gecmis_1m_close > gecmis_1m_open and gecmis_1m_close > liq_fiyat and gecmis_1m_close > esik_fiyat:
+                            telegram_mesaj_gonder(f"🚀 <b>{ad} - GİRİŞ ONAYLANDI (CISD)!</b>\n\n💥 <b>Süpürülen Yer:</b> {hafiza[ad]['patlayan_seviye']}\n📊 <b>Yön:</b> LONG\n💰 <b>Anlık Giriş:</b> {su_anki_fiyat}\n🛑 <b>Stop:</b> Süpürülen Dip Altı\n\n<i>Kapanış nizami geldi, emrini yönetebilirsin boss!</i>")
+                            hafiza[ad] = {"durum": "BEKLEMEDE", "hedef_yon": None, "patlayan_seviye": "", "likidite_fiyat": 0.0, "cisd_esik": 0.0}
 
         except Exception as e:
             print(f"Tarama Döngü Hatası: {e}")
@@ -169,7 +185,7 @@ def asistan_ana_dongu():
 
 @app.route('/')
 def home():
-    return jsonify({"status": "Gelişmiş ICT Asistanı v2.5 Aktif", "hafiza": hafiza}), 200
+    return jsonify({"status": "Gelişmiş ICT Asistanı v2.6 Aktif", "hafiza": hafiza}), 200
 
 if __name__ == '__main__':
     t = threading.Thread(target=asistan_ana_dongu)
