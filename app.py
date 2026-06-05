@@ -5,12 +5,23 @@ import pytz
 
 app = Flask(__name__)
 
+# ==========================================
+# 🚨 TEST MODU AYARI
+# True iken: Saat ne olursa olsun sinyal Telegram'a düşer (Test için).
+# False iken: Sadece aşağıdaki seans saatlerinde sinyal gönderir.
+TEST_MODE = True
+# ==========================================
+
 # Telegram Bot Bilgileri
 BOT_TOKEN = "8615953627:AAFXGCiqohep_A95gobPFrLeG148OHz7n1I"
-CHAT_ID = "1315197368" # @userinfobot'tan aldığın numarayı buraya yaz
+CHAT_ID = "1315197368"
 
 # Zaman Kontrol Fonksiyonu (Türkiye Saati - Istanbul)
 def is_valid_session(parite):
+    # Eğer test modu aktifse zaman kontrolünü bypass et ve onay ver
+    if TEST_MODE:
+        return True
+
     # TR saatini al
     tz = pytz.timezone('Europe/Istanbul')
     now = datetime.now(tz)
